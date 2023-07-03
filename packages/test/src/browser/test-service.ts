@@ -11,9 +11,13 @@
 // with the GNU Classpath Exception which is available at
 // https://www.gnu.org/software/classpath/license.html.
 //
-// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
 // *****************************************************************************
-import { Disposable, URI } from '@theia/core/lib/common';
+
+import { Disposable, Event, URI } from '@theia/core/lib/common';
+import { Location } from '@theia/core/shared/vscode-languageserver-protocol';
+import { CollectionDelta, TreeDelta } from './tree-delta';
+import { MarkdownString } from '@theia/core/lib/common/markdown-rendering';
 
 export enum TestRunProfileKind {
     Run = 1,
@@ -28,6 +32,12 @@ export interface TestRunProfile {
     configure(): void;
 }
 
+export interface OutputEvent {
+    readonly output: string;
+    readonly location?: Location;
+    readonly test?: TestItem;
+}
+
 export interface TestRun {
     cancel(): void;
     readonly name: string;
@@ -39,7 +49,15 @@ export interface TestRun {
     readonly errors: TestFailure[];
     readonly passed: TestSuccess[];
 
-    // output?
+
+    readonly onQueued: Event<TestItem>;
+    readonly onStarted: Event<TestItem>;
+    readonly onSkipped: Event<TestItem>;
+    readonly onFailed: Event<TestFailure>;
+    readonly onErrored: Event<TestFailure>;
+    readonly onPassed: Event<TestSuccess>;
+
+    readonly onOutput: Event<OutputEvent>;
 }
 
 export interface TestFailure {
@@ -56,14 +74,14 @@ export interface TestSuccess {
 export interface TestMessage {
     readonly expected?: string;
     readonly actual?: string;
-    // readonly location: Location;
-    readonly message: string; // | MarkdownString;
+    readonly location: Location;
+    readonly message: string | MarkdownString;
 }
 
 export interface TestItem {
     readonly id: string;
     readonly label: string;
-    // readonly range: Range;
+    readonly range: Range;
     readonly sortKey?: string;
     readonly tags: string[];
     readonly uri: URI;
@@ -71,7 +89,7 @@ export interface TestItem {
     readonly canResolveChildren: boolean;
     readonly children: TestItem[];
     readonly description?: string;
-    readonly error?: string; // | MarkdownString
+    readonly error?: string | MarkdownString
 }
 
 export interface TestController {
@@ -80,8 +98,13 @@ export interface TestController {
     readonly tests: TestItem[];
     readonly testRunProfiles: TestRunProfile[];
     readonly testRuns: TestRun[];
+
+    readonly onItemsChanged: Event<TreeDelta<string, TestItem>[]>;
+    readonly onRunsChanged: Event<CollectionDelta<string, TestRun>>;
+    readonly onProfilesChanged: Event<CollectionDelta<string, TestRunProfile>>;
 }
 
 export interface TestService {
     registerTestController(controller: TestController): Disposable;
+    onControllersChanged: Event<CollectionDelta<string, TestController>>;
 }
