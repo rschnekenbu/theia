@@ -15,7 +15,7 @@
 // *****************************************************************************
 
 import { Disposable, Event } from '@theia/core/lib/common';
-import { Location } from '@theia/core/shared/vscode-languageserver-protocol';
+import { Emitter, Location } from '@theia/core/shared/vscode-languageserver-protocol';
 import { CollectionDelta, TreeDelta } from './tree-delta';
 import { MarkdownString } from '@theia/core/lib/common/markdown-rendering';
 import URI from '@theia/core/lib/common/uri';
@@ -29,6 +29,7 @@ export enum TestRunProfileKind {
 export interface TestRunProfile {
     readonly kind: TestRunProfileKind;
     readonly isDefault: boolean;
+    readonly tags: string;
     run(): void;
     configure(): void;
 }
@@ -95,16 +96,34 @@ export interface TestItem {
 export interface TestController {
     readonly id: string;
     readonly label: string;
-    readonly tests: TestItem[];
-    readonly testRunProfiles: TestRunProfile[];
-    readonly testRuns: TestRun[];
+    readonly tests: readonly TestItem[];
+    readonly testRunProfiles: readonly TestRunProfile[];
+    readonly testRuns: readonly TestRun[];
 
     readonly onItemsChanged: Event<TreeDelta<string, TestItem>[]>;
-    readonly onRunsChanged: Event<CollectionDelta<string, TestRun>>;
-    readonly onProfilesChanged: Event<CollectionDelta<string, TestRunProfile>>;
+    readonly onRunsChanged: Event<CollectionDelta<TestRun, TestRun>>;
+    readonly onProfilesChanged: Event<CollectionDelta<TestRunProfile, TestRunProfile>>;
 }
 
 export interface TestService {
     registerTestController(controller: TestController): Disposable;
     onControllersChanged: Event<CollectionDelta<string, TestController>>;
+}
+
+export class DefaultTestService implements TestService {
+    private controllers: Map<string, TestController> = new Map();
+    private onControllersChangedEmitter = new Emitter<CollectionDelta<string, TestController>>();
+
+    onControllersChanged: Event<CollectionDelta<string, TestController>> = this.onControllersChangedEmitter.event;
+
+    registerTestController(controller: TestController): Disposable {
+        if (this.controllers.has(controller.id)) {
+            throw new Error('TestController already registered: ' + controller.id);
+        }
+        this.onControllersChangedEmitter.fire({ added: [controller] });
+        return Disposable.create(() => {
+            this.controllers.delete(controller.id);
+            this.onControllersChangedEmitter.fire({ removed: [controller.id] });
+        });
+    }
 }
