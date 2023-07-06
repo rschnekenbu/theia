@@ -14,10 +14,11 @@
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
 // *****************************************************************************
 
-import { Disposable, Event, URI } from '@theia/core/lib/common';
+import { Disposable, Event } from '@theia/core/lib/common';
 import { Location } from '@theia/core/shared/vscode-languageserver-protocol';
 import { CollectionDelta, TreeDelta } from './tree-delta';
 import { MarkdownString } from '@theia/core/lib/common/markdown-rendering';
+import URI from '@theia/core/lib/common/uri';
 
 export enum TestRunProfileKind {
     Run = 1,
@@ -48,7 +49,6 @@ export interface TestRun {
     readonly failures: TestFailure[];
     readonly errors: TestFailure[];
     readonly passed: TestSuccess[];
-
 
     readonly onQueued: Event<TestItem>;
     readonly onStarted: Event<TestItem>;

@@ -19,56 +19,159 @@ export interface CollectionDelta<K, T> {
     removed?: K[];
 }
 
-export interface TreeDelta<K, T> {
-    path: K[];
-    properties?: Partial<T>;
-    added?: T[];
-    removed?: K[];
-    changed?: TreeDelta<K, T>[];
+export enum DeltaKind {
+    NONE, ADDED, REMOVED, CHANGED
 }
 
-class TreeDeltaBuilder<K, T> {
-    currentDelta: TreeDelta<K, T>;
+export interface TreeDelta<K, T> {
+    path: K[];
+    type: DeltaKind;
+    value?: Partial<T>;
+    childDeltas?: TreeDelta<K, T>[];
+}
 
-    reportAdded(path: K[], added: T): void {
-        const targetNode = this.findNode(path);
-        if (!targetNode.added) {
-            targetNode.added = [];
-        }
-        targetNode.added.push(added);
+export class TreeDeltaBuilder<K, T> {
+    private _currentDelta: TreeDelta<K, T>[] = [];
+
+    constructor() {
     }
 
-    reportRemoved(path: K[], id: K): void {
-        const targetNode = this.findNode(path);
-        if (!targetNode.removed) {
-            targetNode.removed = [];
-        }
+    get currentDelta(): TreeDelta<K, T>[] {
+        return this._currentDelta;
+    }
 
-        targetNode.removed.push(id);
+    reportAdded(path: K[], added: T): void {
+        this.findNode(path, (parentCollection, nodeIndex, residual) => {
+            if (residual.length === 0) {
+                // we matched an exact node
+                const child = parentCollection[nodeIndex];
+                if (child.type === DeltaKind.REMOVED) {
+                    child.type = DeltaKind.CHANGED;
+                } else if (child.type === DeltaKind.NONE) {
+                    child.type = DeltaKind.ADDED;
+                }
+                child.value = added;
+            } else {
+                this.insert(parentCollection, nodeIndex, {
+                    path: residual,
+                    type: DeltaKind.ADDED,
+                    value: added,
+                });
+            }
+        });
+    }
+
+    reportRemoved(path: K[]): void {
+        this.findNode(path, (parentCollection, nodeIndex, residual) => {
+            if (residual.length === 0) {
+                // we matched an exact node
+                const child = parentCollection[nodeIndex];
+                if (child.type === DeltaKind.CHANGED) {
+                    child.type = DeltaKind.REMOVED;
+                    delete child.value;
+                } else if (child.type === DeltaKind.ADDED) {
+                    parentCollection.splice(nodeIndex, 1);
+                } else if (child.type === DeltaKind.NONE) {
+                    child.type = DeltaKind.REMOVED;
+                }
+            } else {
+                this.insert(parentCollection, nodeIndex, {
+                    path: residual,
+                    type: DeltaKind.REMOVED,
+                });
+            }
+        });
+
     }
 
     reportChanged(path: K[], change: Partial<T>): void {
-        const targetNode = this.findNode(path);
-        targetNode.properties = { ...{}, ...targetNode.properties, ...change };
+        this.findNode(path, (parentCollection, nodeIndex, residual) => {
+            if (residual.length === 0) {
+                // we matched an exact node
+                const child = parentCollection[nodeIndex];
+                if (child.type === DeltaKind.NONE) {
+                    child.type = DeltaKind.CHANGED;
+                }
+                if (child.type !== DeltaKind.REMOVED) {
+                    child.value = { ...child.value, ...change };
+                }
+            } else {
+                this.insert(parentCollection, nodeIndex, {
+                    path: residual,
+                    type: DeltaKind.CHANGED,
+                    value: change,
+                });
+            }
+        });
+
     }
 
-    private findNode(path: K[]): TreeDelta<K, T> {
-        return doFindNode(this.currentDelta, path);
+    private insert(parentCollection: TreeDelta<K, T>[], nodeIndex: number, delta: TreeDelta<K, T>): void {
+        if (nodeIndex < 0) {
+            parentCollection.push(delta);
+        } else {
+            const child = parentCollection[nodeIndex];
+            const prefixLength = computePrefixLength(delta.path, child.path);
+
+            const newNode: TreeDelta<K, T> = {
+                path: child.path.slice(0, prefixLength),
+                type: DeltaKind.NONE,
+                childDeltas: []
+            };
+            parentCollection[nodeIndex] = newNode;
+            delta.path = delta.path.slice(prefixLength);
+            newNode.childDeltas!.push(delta);
+            child.path = child.path.slice(prefixLength);
+            newNode.childDeltas!.push(child);
+        }
     }
 
+    private findNode(path: K[], handler: (parentCollection: TreeDelta<K, T>[], nodeIndex: number, residualPath: K[]) => void): void {
+        doFindNode(this._currentDelta, path, handler);
+    }
 }
 
-function doFindNode<K, T>(currentDelta: TreeDelta<K, T>, path: K[]): TreeDelta<K, T> {
-    if (path.length === 0) {
-        return currentDelta;
+function doFindNode<K, T>(rootCollection: TreeDelta<K, T>[], path: K[],
+    handler: (parentCollection: TreeDelta<K, T>[], nodeIndex: number, residualPath: K[]) => void): void {
+    let commonPrefixLength = 0;
+    const childIndex = rootCollection.findIndex(delta => {
+        commonPrefixLength = computePrefixLength(delta.path, path);
+        return commonPrefixLength > 0;
+    });
+    if (childIndex >= 0) {
+        // we know which child to insert into
+        const child = rootCollection[childIndex];
+        if (commonPrefixLength === child.path.length) {
+            // we matched a child
+            if (commonPrefixLength === path.length) {
+                // it's an exact match: we alread have a node for the given path
+                handler(rootCollection, childIndex, []);
+                return;
+            }
+            // we know the node is below the child
+            if (child.type === DeltaKind.REMOVED || child.type === DeltaKind.ADDED) {
+                // there will be no children deltas beneath added/remove nodes
+                return;
+            }
+            if (!child.childDeltas) {
+                child.childDeltas = [];
+            }
+            doFindNode(child.childDeltas, path.slice(child.path.length), handler);
+        } else {
+            handler(rootCollection, childIndex, path);
+        }
+    } else {
+        // we have no node to insert into
+        handler(rootCollection, -1, path);
     }
-    let index = 0;
-    while (index < currentDelta.path.length && index < path.length && path[index] === currentDelta.path[index]) {
-        index++;
-    }
-    if (index === currentDelta.path.length) {
-        return doFindNode()
+}
+
+function computePrefixLength<K>(left: K[], right: K[]): number {
+    let i = 0;
+    while (i < left.length && i < right.length && left[i] === right[i]) {
+        i++;
     }
 
+    return i;
 }
 
