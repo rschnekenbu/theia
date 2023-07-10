@@ -14,6 +14,9 @@
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
 // *****************************************************************************
 
+import debounce = require('@theia/core/shared/lodash.debounce');
+import { Emitter } from '@theia/core/';
+
 export interface CollectionDelta<K, T> {
     added?: T[];
     removed?: K[];
@@ -31,10 +34,7 @@ export interface TreeDelta<K, T> {
 }
 
 export class TreeDeltaBuilder<K, T> {
-    private _currentDelta: TreeDelta<K, T>[] = [];
-
-    constructor() {
-    }
+    protected _currentDelta: TreeDelta<K, T>[] = [];
 
     get currentDelta(): TreeDelta<K, T>[] {
         return this._currentDelta;
@@ -175,3 +175,19 @@ function computePrefixLength<K>(left: K[], right: K[]): number {
     return i;
 }
 
+export class AccumulatingTreeDeltaEmitter<K, T> extends TreeDeltaBuilder<K, T> {
+    emitDelta: () => void;
+
+    emitter: Emitter<TreeDelta<K, T>[]> = new Emitter();
+
+    constructor(timeoutMillis: number) {
+        super();
+        this.emitDelta = debounce(() => this.doEmitDelta(), timeoutMillis);
+    }
+
+    doEmitDelta(): void {
+        this.emitter.fire(this._currentDelta);
+        this._currentDelta = [];
+    }
+
+}

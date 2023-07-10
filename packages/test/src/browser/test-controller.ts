@@ -19,7 +19,7 @@ import { Event, URI } from '@theia/core';
 import { Range } from '@theia/core/shared/vscode-languageserver-protocol';
 
 import { TestController, TestItem, TestRun, TestRunProfile } from './test-service';
-import { TreeDelta, CollectionDelta, TreeDeltaBuilder } from './tree-delta';
+import { TreeDelta, CollectionDelta, TreeDeltaBuilder, AccumulatingTreeDeltaEmitter } from './tree-delta';
 import { SimpleObservableCollection, TreeCollection } from './collections';
 import { MarkdownString } from '@theia/core/lib/common/markdown-rendering';
 
@@ -40,9 +40,28 @@ function observableProperty(observationFunction: string): (target: any, property
     };
 }
 
+class TestItemCollection extends TreeCollection<string, TestItemImpl> {
+    constructor(private owner: TestItemImpl | undefined, deltaBuilder: TreeDeltaBuilder<string, TestItemImpl>) {
+        super(item => item.path!, deltaBuilder);
+    }
+
+    override add(item: TestItemImpl): TestItemImpl | undefined {
+        item.parent = this.owner;
+        return super.add(item);
+    }
+}
+
 export class TestItemImpl implements TestItem {
-    constructor(private readonly deltaBuilder: TreeDeltaBuilder<string, TestItemImpl>, private readonly path: string[], readonly uri: URI) {
-        this._children = new TreeCollection<string, TestItemImpl>(item => item.path, deltaBuilder);
+    constructor(deltaBuilder: TreeDeltaBuilder<string, TestItemImpl>, uri: URI, id: string)
+    constructor(deltaBuilder: TreeDeltaBuilder<string, TestItemImpl>, uri: URI, path: string[])
+    constructor(private readonly deltaBuilder: TreeDeltaBuilder<string, TestItemImpl>, readonly uri: URI, idOrPath: string | string[]) {
+        this._children = new TestItemCollection(this, deltaBuilder);
+        if (Array.isArray(idOrPath)) {
+            this.id = idOrPath[idOrPath.length - 1];
+            this._path = idOrPath;
+        } else {
+            this.id = idOrPath;
+        }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -50,11 +69,49 @@ export class TestItemImpl implements TestItem {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const val: any = {};
         val[property] = value;
-        this.deltaBuilder.reportChanged(this.path, val);
+        if (this.path) {
+            this.deltaBuilder.reportChanged(this.path, val);
+        }
     }
 
-    get id(): string {
-        return this.path[this.path.length - 1];
+    readonly id: string;
+    private _path: string[] | undefined;
+
+    get path(): string[] | undefined {
+        if (this._path) {
+            return this._path;
+        } else if (this.parent && this.parent.path) {
+            this._path = [...this.parent.path, this.id];
+            return this._path;
+        } else {
+            return undefined;
+        }
+    };
+
+    private _parent?: TestItemImpl;
+    get parent(): TestItemImpl | undefined {
+        return this._parent;
+    }
+
+    set parent(v: TestItemImpl | undefined) {
+        this.iterate(item => {
+            item._path = undefined;
+            return true;
+        });
+        this._parent = v;
+    }
+
+    protected iterate(toDo: (v: TestItemImpl) => boolean): boolean {
+        if (toDo(this)) {
+            for (let i = 0; i < this._children.values.length; i++) {
+                if (!this._children.values[i].iterate(toDo)) {
+                    return false;
+                }
+            }
+            return true;
+        } else {
+            return false;
+        }
     }
 
     @observableProperty('notifyPropertyChange')
@@ -85,12 +142,13 @@ export class TestItemImpl implements TestItem {
     get children(): readonly TestItem[] {
         return this._children.values;
     }
-
 }
 
 export class TestControllerImpl implements TestController {
     private _profiles = new SimpleObservableCollection<TestRunProfile>();
     private _runs = new SimpleObservableCollection<TestRun>();
+    private deltaBuilder = new AccumulatingTreeDeltaEmitter<string, TestItemImpl>(300);
+    items = new TestItemCollection(undefined, this.deltaBuilder);
 
     constructor(readonly id: string, readonly label: string) {
     }
@@ -110,6 +168,12 @@ export class TestControllerImpl implements TestController {
     }
     onRunsChanged: Event<CollectionDelta<TestRun, TestRun>> = this._runs.onChanged;
 
-    tests: TestItem[];
-    onItemsChanged: Event<TreeDelta<string, TestItem>[]>;
+    createTestItem(id: string, uri: URI): TestItemImpl {
+        return new TestItemImpl(this.deltaBuilder, uri, id);
+    }
+
+    get tests(): readonly TestItem[] {
+        return this.items.values;
+    }
+    onItemsChanged: Event<TreeDelta<string, TestItem>[]> = this.deltaBuilder.emitter.event;
 }

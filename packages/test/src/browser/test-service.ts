@@ -14,11 +14,12 @@
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
 // *****************************************************************************
 
-import { Disposable, Emitter, Event } from '@theia/core/lib/common';
+import { ContributionProvider, Disposable, Emitter, Event } from '@theia/core/lib/common';
 import { Location, Range } from '@theia/core/shared/vscode-languageserver-protocol';
 import { CollectionDelta, TreeDelta } from './tree-delta';
 import { MarkdownString } from '@theia/core/lib/common/markdown-rendering';
 import URI from '@theia/core/lib/common/uri';
+import { inject, injectable, named, postConstruct } from '@theia/core/shared/inversify';
 
 export enum TestRunProfileKind {
     Run = 1,
@@ -110,9 +111,24 @@ export interface TestService {
     onControllersChanged: Event<CollectionDelta<string, TestController>>;
 }
 
+export const TestContribution = Symbol('TestContribution');
+
+export interface TestContribution {
+    registerTestControllers(service: TestService): void;
+}
+
+@injectable()
 export class DefaultTestService implements TestService {
     private controllers: Map<string, TestController> = new Map();
     private onControllersChangedEmitter = new Emitter<CollectionDelta<string, TestController>>();
+
+    @inject(ContributionProvider) @named(TestContribution)
+    protected readonly contributionProvider: ContributionProvider<TestContribution>;
+
+    @postConstruct()
+    protected registerContributions(): void {
+        this.contributionProvider.getContributions().forEach(contribution => contribution.registerTestControllers(this));
+    }
 
     onControllersChanged: Event<CollectionDelta<string, TestController>> = this.onControllersChangedEmitter.event;
 
