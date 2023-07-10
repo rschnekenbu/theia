@@ -14,8 +14,8 @@
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
 // *****************************************************************************
 
-import { Disposable, Event } from '@theia/core/lib/common';
-import { Emitter, Location } from '@theia/core/shared/vscode-languageserver-protocol';
+import { Disposable, Emitter, Event } from '@theia/core/lib/common';
+import { Location, Range } from '@theia/core/shared/vscode-languageserver-protocol';
 import { CollectionDelta, TreeDelta } from './tree-delta';
 import { MarkdownString } from '@theia/core/lib/common/markdown-rendering';
 import URI from '@theia/core/lib/common/uri';
@@ -88,7 +88,7 @@ export interface TestItem {
     readonly uri: URI;
     readonly busy: boolean;
     readonly canResolveChildren: boolean;
-    readonly children: TestItem[];
+    readonly children: readonly TestItem[];
     readonly description?: string;
     readonly error?: string | MarkdownString
 }

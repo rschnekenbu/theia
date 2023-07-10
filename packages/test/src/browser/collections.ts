@@ -15,7 +15,7 @@
 // *****************************************************************************
 
 import { Event } from '@theia/core';
-import { CollectionDelta } from './tree-delta';
+import { CollectionDelta, TreeDeltaBuilder } from './tree-delta';
 import { Emitter } from '@theia/core/shared/vscode-languageserver-protocol';
 
 export class SimpleObservableCollection<V> {
@@ -47,5 +47,67 @@ export class SimpleObservableCollection<V> {
     onChanged: Event<CollectionDelta<V, V>> = this.onChangeEmitter.event;
     get values(): readonly V[] {
         return this._values;
+    }
+}
+
+abstract class AbstractIndexedCollection<K, T> {
+    private keys: Map<K, number> = new Map();
+    private _values: T[] = [];
+
+    abstract add(item: T): T | undefined;
+
+    get values(): readonly T[] {
+        return this._values;
+    }
+
+    protected doAdd(key: K, value: T): T | undefined {
+        const index = this.keys.get(key);
+        if (index) {
+            const previous = this._values[index];
+            this._values[index] = value;
+            return previous;
+        } else {
+            this._values.push(value);
+            this.keys.set(key, this._values.length - 1);
+            return undefined;
+        }
+    }
+
+    abstract remove(value: T): T | undefined;
+
+    doRemove(key: K, value: T): T | undefined {
+        const index = this.keys.get(key);
+        if (index) {
+            const previous = this._values[index];
+            this._values.slice(index, 1);
+            return previous;
+        }
+        return undefined;
+    }
+}
+
+export class TreeCollection<K, T> extends AbstractIndexedCollection<K, T> {
+    constructor(private pathOf: (value: T) => K[], private deltaCollector: TreeDeltaBuilder<K, T>) {
+        super();
+    }
+
+    add(item: T): T | undefined {
+        const path = this.pathOf(item);
+        const previous = this.doAdd(path[path.length - 1], item);
+        if (previous) {
+            this.deltaCollector.reportChanged(path, item);
+        } else {
+            this.deltaCollector.reportAdded(path, item);
+        }
+        return previous;
+    }
+
+    override remove(value: T): T | undefined {
+        const path = this.pathOf(value);
+        const previous = super.doRemove(path[path.length - 1], value);
+        if (previous) {
+            this.deltaCollector.reportRemoved(path);
+        }
+        return previous;
     }
 }
