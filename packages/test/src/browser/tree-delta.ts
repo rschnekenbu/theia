@@ -190,4 +190,18 @@ export class AccumulatingTreeDeltaEmitter<K, T> extends TreeDeltaBuilder<K, T> {
         this._currentDelta = [];
     }
 
+    override reportAdded(path: K[], added: T): void {
+        super.reportAdded(path, added);
+        this.emitDelta();
+    }
+
+    override reportChanged(path: K[], change: Partial<T>): void {
+        super.reportChanged(path, change);
+        this.emitDelta();
+    }
+
+    override reportRemoved(path: K[]): void {
+        super.reportRemoved(path);
+        this.emitDelta();
+    }
 }

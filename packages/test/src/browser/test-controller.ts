@@ -41,26 +41,27 @@ function observableProperty(observationFunction: string): (target: any, property
 }
 
 class TestItemCollection extends TreeCollection<string, TestItemImpl> {
-    constructor(private owner: TestItemImpl | undefined, deltaBuilder: TreeDeltaBuilder<string, TestItemImpl>) {
-        super(item => item.path!, deltaBuilder);
-    }
-
     override add(item: TestItemImpl): TestItemImpl | undefined {
         item.parent = this.owner;
+        item._deltaBuilder = this.deltaBuilder(this.owner);
         return super.add(item);
     }
 }
 
 export class TestItemImpl implements TestItem {
-    constructor(deltaBuilder: TreeDeltaBuilder<string, TestItemImpl>, uri: URI, id: string)
-    constructor(deltaBuilder: TreeDeltaBuilder<string, TestItemImpl>, uri: URI, path: string[])
-    constructor(private readonly deltaBuilder: TreeDeltaBuilder<string, TestItemImpl>, readonly uri: URI, idOrPath: string | string[]) {
-        this._children = new TestItemCollection(this, deltaBuilder);
-        if (Array.isArray(idOrPath)) {
-            this.id = idOrPath[idOrPath.length - 1];
-            this._path = idOrPath;
+    constructor(readonly uri: URI, readonly id: string) {
+        this._children = new TestItemCollection(this, (v: TestItemImpl) => v.path, (v: TestItemImpl) => v.deltaBuilder);
+    }
+
+    _deltaBuilder: TreeDeltaBuilder<string, TestItemImpl> | undefined;
+    get deltaBuilder(): TreeDeltaBuilder<string, TestItemImpl> | undefined {
+        if (this._deltaBuilder) {
+            return this._deltaBuilder;
+        } else if (this.parent) {
+            this._deltaBuilder = this.parent._deltaBuilder;
+            return this._deltaBuilder;
         } else {
-            this.id = idOrPath;
+            return undefined;
         }
     }
 
@@ -70,21 +71,20 @@ export class TestItemImpl implements TestItem {
         const val: any = {};
         val[property] = value;
         if (this.path) {
-            this.deltaBuilder.reportChanged(this.path, val);
+            this.deltaBuilder?.reportChanged(this.path, val);
         }
     }
 
-    readonly id: string;
-    private _path: string[] | undefined;
+    _path: string[] | undefined;
 
-    get path(): string[] | undefined {
+    get path(): string[] {
         if (this._path) {
             return this._path;
         } else if (this.parent && this.parent.path) {
             this._path = [...this.parent.path, this.id];
             return this._path;
         } else {
-            return undefined;
+            return [this.id];
         }
     };
 
@@ -138,7 +138,7 @@ export class TestItemImpl implements TestItem {
     @observableProperty('notifyPropertyChange')
     error?: string | MarkdownString | undefined;
 
-    _children: TreeCollection<string, TestItemImpl>;
+    _children: TestItemCollection;
     get children(): readonly TestItem[] {
         return this._children.values;
     }
@@ -148,7 +148,7 @@ export class TestControllerImpl implements TestController {
     private _profiles = new SimpleObservableCollection<TestRunProfile>();
     private _runs = new SimpleObservableCollection<TestRun>();
     private deltaBuilder = new AccumulatingTreeDeltaEmitter<string, TestItemImpl>(300);
-    items = new TestItemCollection(undefined, this.deltaBuilder);
+    items = new TestItemCollection(undefined, item => item.path, () => this.deltaBuilder);
 
     constructor(readonly id: string, readonly label: string) {
     }
@@ -167,10 +167,6 @@ export class TestControllerImpl implements TestController {
         return this._runs.values;
     }
     onRunsChanged: Event<CollectionDelta<TestRun, TestRun>> = this._runs.onChanged;
-
-    createTestItem(id: string, uri: URI): TestItemImpl {
-        return new TestItemImpl(this.deltaBuilder, uri, id);
-    }
 
     get tests(): readonly TestItem[] {
         return this.items.values;

@@ -60,6 +60,19 @@ abstract class AbstractIndexedCollection<K, T> {
         return this._values;
     }
 
+    has(key: K): boolean {
+        return this.keys.has(key);
+    }
+
+    get(key: K): T | undefined {
+        const index = this.keys.get(key);
+        if (index && index >= 0) {
+            return this._values[index];
+        } else {
+            return undefined;
+        }
+    }
+
     protected doAdd(key: K, value: T): T | undefined {
         const index = this.keys.get(key);
         if (index) {
@@ -87,17 +100,23 @@ abstract class AbstractIndexedCollection<K, T> {
 }
 
 export class TreeCollection<K, T> extends AbstractIndexedCollection<K, T> {
-    constructor(private pathOf: (value: T) => K[], private deltaCollector: TreeDeltaBuilder<K, T>) {
+
+    constructor(protected readonly owner: T | undefined,
+        protected readonly pathOf: (v: T) => K[],
+        protected readonly deltaBuilder: (v: T | undefined) => TreeDeltaBuilder<K, T> | undefined) {
         super();
     }
 
     add(item: T): T | undefined {
         const path = this.pathOf(item);
         const previous = this.doAdd(path[path.length - 1], item);
-        if (previous) {
-            this.deltaCollector.reportChanged(path, item);
-        } else {
-            this.deltaCollector.reportAdded(path, item);
+        const deltaBuilder = this.deltaBuilder(item);
+        if (deltaBuilder) {
+            if (previous) {
+                deltaBuilder.reportChanged(path, item);
+            } else {
+                deltaBuilder.reportAdded(path, item);
+            }
         }
         return previous;
     }
@@ -105,8 +124,9 @@ export class TreeCollection<K, T> extends AbstractIndexedCollection<K, T> {
     override remove(value: T): T | undefined {
         const path = this.pathOf(value);
         const previous = super.doRemove(path[path.length - 1], value);
-        if (previous) {
-            this.deltaCollector.reportRemoved(path);
+        const deltaBuilder = this.deltaBuilder(value);
+        if (deltaBuilder && previous) {
+            deltaBuilder.reportRemoved(path);
         }
         return previous;
     }

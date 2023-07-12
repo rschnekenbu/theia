@@ -16,31 +16,95 @@
 // *****************************************************************************
 
 import { TestContribution, TestService } from '@theia/test/lib/browser/test-service';
-import { TestControllerImpl } from '@theia/test/lib/browser/test-controller';
-import { CommandContribution, CommandRegistry } from '@theia/core';
-import { injectable, interfaces } from '@theia/core/shared/inversify';
+import { TestControllerImpl, TestItemImpl } from '@theia/test/lib/browser/test-controller';
+import { CommandContribution, CommandRegistry, Path, URI } from '@theia/core';
+import { inject, injectable, interfaces } from '@theia/core/shared/inversify';
+import { WorkspaceService } from '@theia/workspace/lib/browser';
+import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { FileSearchService } from '@theia/file-search/lib/common/file-search-service';
+import { FileStatWithMetadata } from '@theia/filesystem/lib/common/files';
 
 const testController = new TestControllerImpl('SampleTestController', 'Sample Test Controller');
 testController.onItemsChanged(e => {
-    console.log(JSON.stringify(e, undefined, 4));
+    console.log(JSON.stringify(e, stringifyTransformer, 4));
 });
+
+function stringifyTransformer(key: string, value: any): any {
+    if (value instanceof URI) {
+        return value.toString();
+    }
+    if (value instanceof TestItemImpl) {
+        return {
+            id: value.id,
+            label: value.label,
+            range: value.range,
+            sortKey: value.sortKey,
+            tags: value.tags,
+            uri: value.uri,
+            busy: value.busy,
+            canResolveChildren: value.canResolveChildren,
+            children: value.children,
+            description: value.description,
+            error: value.error
+        };
+    }
+    return value;
+}
 
 @injectable()
 export class SampleTestContribution implements TestContribution, CommandContribution {
+    @inject(WorkspaceService)
+    private workspaceService: WorkspaceService;
+
+    @inject(FileSearchService)
+    private searchService: FileSearchService;
+
+    @inject(FileService)
+    private fileService: FileService;
+
+    private usedUris = new Set<string>();
 
     registerCommands(commands: CommandRegistry): void {
         commands.registerCommand({ id: 'testController.addSomeTests', label: 'Add Some Tests', category: 'Tests Sample' }, {
-            execute(...args: any): any {
+            execute: async (...args: any): Promise<any> => {
 
+                const root = (await this.workspaceService.roots)[0];
+                const files = (await this.searchService.find('.json', {
+                    rootUris: [root.resource.toString()],
+                    limit: 1000
+                })).filter(uri => !this.usedUris.has(uri));
+                for (let i = 0; i < Math.min(10, files.length); i++) {
+                    const fileUri = new URI(files[i]);
+                    const relativePath = root.resource.path.relative(fileUri.path);
+                    let collection = testController.items;
+
+                    let dirUri = root.resource;
+
+                    relativePath?.toString().split(Path.separator).forEach(name => {
+                        dirUri = dirUri.withPath(dirUri.path.join(name));
+                        let item = collection.get(name);
+                        if (!item) {
+                            item = new TestItemImpl(dirUri, name);
+                            collection.add(item);
+                        }
+                        collection = item._children;
+                    });
+                    const meta: FileStatWithMetadata = await this.fileService.resolve(fileUri, { resolveMetadata: true });
+                    const testItem = new TestItemImpl(fileUri, 'first test');
+                    testItem.range = {
+                        start: { line: 0, character: 0 },
+                        end: { line: 0, character: Math.min(10, meta.size) }
+                    };
+                    collection.add(testItem);
+                }
             }
         });
 
         commands.registerCommand({ id: 'testController.dumpController', label: 'Dump Controller Contents', category: 'Tests Sample' }, {
             execute(...args: any): any {
-                console.log(JSON.stringify(testController, undefined, 4));
+                console.log(JSON.stringify(testController, stringifyTransformer, 4));
             }
         });
-
     }
 
     registerTestControllers(service: TestService): void {
@@ -53,4 +117,3 @@ export function bindTestSample(bind: interfaces.Bind): void {
     bind(CommandContribution).toService(SampleTestContribution);
     bind(TestContribution).toService(SampleTestContribution);
 };
-
